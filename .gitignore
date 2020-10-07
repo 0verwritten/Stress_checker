@@ -2,3 +2,5 @@ bin
 database
 obj
 config.json
+.DS_Store
+.gitignore
