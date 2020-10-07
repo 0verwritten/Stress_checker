@@ -1,0 +1,13 @@
+{
+    "admins":[
+        {"userid":1231} 
+    ],
+
+    "users":[
+        {"userid":1231}
+    ],
+
+    "words":[
+        {"word":"агронОмія", "definition":""}
+    ]
+}
