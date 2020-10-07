@@ -1,0 +1,6 @@
+{
+    "telegram_token":"<Telegram token>",
+    "db_connection_string":"<connection string for postgresql>",
+    "stresses_file":"<location of file with stresses",
+    "invite_code":"<password to register>"
+}
