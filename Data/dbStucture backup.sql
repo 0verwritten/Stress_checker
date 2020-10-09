@@ -8,7 +8,7 @@ answers varchar(30)[] default NULL
 );
 create table words (
 id serial,
-word varchar(30),
+word varchar(30) unique,
 definition text
 );
 create table admins (
