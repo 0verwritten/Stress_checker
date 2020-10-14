@@ -1,0 +1,3 @@
+updated help message
+added comments for custum types
+logging by linux bash

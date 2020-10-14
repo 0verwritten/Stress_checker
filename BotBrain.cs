@@ -15,17 +15,16 @@ namespace Stress_checker
 {
     class StressChecker{
         ApplicationData applicationData;
-        readonly TelegramBotClient botClient;
+        TelegramBotClient botClient;
         NpgsqlConnection DBConnection;
         readonly char[] vowels = new char[] {'а', 'е', 'и', 'і', 'о', 'у', 'я', 'ю', 'є', 'ї'};
         public StressChecker(string filename = "config.json"){
-            using ( var stream = File.OpenRead(filename) ){
+            using ( var stream = File.OpenRead(@$"{filename}") ){
                 applicationData = JsonSerializer.DeserializeAsync<ApplicationData>(stream).Result;
             }
 
             DBConnection  = new NpgsqlConnection(applicationData.db_connection_string);
             botClient = new Telegram.Bot.TelegramBotClient(applicationData.telegram_token);
-
             // stresseRestore();
         }
         public async Task Start(){
@@ -62,6 +61,16 @@ namespace Stress_checker
                         case "start_game":
                             await Game(e.Message.From.Id, e.Message.Chat.Id, message.Substring(1).Contains(" ") ? Convert.ToUInt16(message.Substring(1).Split(" ")[1]) : (ushort)20);
                             break;
+                        case "in_game":
+                            await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Ні, ви не в грі");
+                            break;
+                        case "update_data":
+                            bool res = appDataUpdate();
+                            if(res)
+                                await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Успішно оновдено данні");
+                            else
+                                await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Не вийшло оновити данні");
+                            break;
                         default:
                             await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Незрозуміла команда");
                             break;
@@ -81,6 +90,7 @@ namespace Stress_checker
                             await QuitTheGame(e.Message.From.Id, e.Message.Chat.Id);
                             break;
                         case "in_game":
+                            await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Так, ви в грі");
                             break;
                         default:
                             await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Незрозуміла команда");
@@ -106,7 +116,6 @@ namespace Stress_checker
                 await using (var cmd = new NpgsqlCommand($"SELECT violation FROM users WHERE userid="+e.Message.From.Id.ToString(), DBConnection))
                 await using (var reader = await cmd.ExecuteReaderAsync())
                 while (await reader.ReadAsync()){
-                    Console.WriteLine(reader.GetInt32(0));
                     violation += reader.GetInt32(0);
                 }
                 await botClient.SendTextMessageAsync(e.Message.Chat.Id, $"Changing text isn't allowed. If you change any text you entered, you will have {3-violation} warnings and then you will get ban\n2 attempts left");
@@ -118,17 +127,26 @@ namespace Stress_checker
         }
         async Task StartMessage(long chat_id){
             await botClient.SendTextMessageAsync(chat_id, @"Це бот для перевірки наголосів. Для того, щоб це зробити, вам потрібно:
-1) Зареєструватися за допомогою
+1)  Зареєструватися за допомогою
 /register <код запрошення>
+
     для перевірки, чи ви вже зереєстровані
-/is_registered <- 
-2) Власне почати гру
+/is_registered
+
+2)  Власне почати гру
 /start_game <кількість слів ( за промовчкванням 20 )>
 
-Якщо ви пам'ятаєте, як потрібно наголошувати слово:
+    для того, щоб вийти з гри ( працює тільки підчас гри)
+/quit
+
+    для того, щоб перевірити чи ви зараз в грі
+/in_game
+
+3)  Якщо ви пам'ятаєте, як потрібно наголошувати слово:(Ще у розробці)
 /search слово
 
-/help <- для інформації про бота
+4)  Довідка по використанню бота
+/help
 ");
         }
         async Task<bool> in_proggress(int user_id){
@@ -157,7 +175,7 @@ namespace Stress_checker
                 }
             }catch(System.AggregateException e){
                 Console.WriteLine(e.Data);
-                return new Exception("You have alredy registered");
+                return new Exception("Ви вже зареєстровані");
             }
 
             return null;
@@ -167,7 +185,6 @@ namespace Stress_checker
             await using (var cmd = new NpgsqlCommand($"SELECT id FROM users WHERE userid="+user_id, DBConnection))
             await using (var reader = await cmd.ExecuteReaderAsync())
             while (await reader.ReadAsync()){
-                Console.WriteLine(reader.GetInt32(0));
                 if(chat_id==null){
                     return reader.FieldCount != 0;
                 }
@@ -339,7 +356,6 @@ namespace Stress_checker
             keyboard.Keyboard = keyboard.Keyboard.Append( new Telegram.Bot.Types.ReplyMarkups.KeyboardButton[]{
                 new Telegram.Bot.Types.ReplyMarkups.KeyboardButton("Готово")
             });
-            Console.WriteLine($"{nextWord} {newWord}");
             
             await botClient.SendTextMessageAsync(chat_id, $"Який наголос правильний?{ (word.definition == "" ? "" : "\nЗначення: " + word.definition) }", replyMarkup: keyboard);
         }
