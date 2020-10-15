@@ -8,15 +8,7 @@ namespace Stress_checker{
         public string stresses_file { get; set; } = Path.Combine(Environment.CurrentDirectory, "stresses.txt"); // file where all stresses for database restore is stored
         public string invite_code { get; set; } // register password
         public bool forceRestore { get; set; } // to rewrite all data in database
-        public bool debug { get; set; } = false;
-        private string _logging;
-        public string logging {   // directory where loggs will be stored
-                get { return _logging; } 
-                set{
-                    if( value[0] == '/' || value[0] == '~' ) _logging = value;
-                    else _logging = Path.Combine(Environment.CurrentDirectory, value);
-                } 
-            }
+        public uint[] admins { get; set; } // admins list
         public ApplicationData() {}
     }
     

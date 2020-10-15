@@ -10,6 +10,7 @@ using System.Linq;
 using System.IO;
 using Npgsql;
 using System;
+using System.Net;
 
 namespace Stress_checker
 {
@@ -70,6 +71,13 @@ namespace Stress_checker
                                 await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Успішно оновдено данні");
                             else
                                 await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Не вийшло оновити данні");
+                            break;
+                        case "my_id":
+                            await botClient.SendTextMessageAsync(e.Message.From.Id, $"Ваш ID: {e.Message.From.Id}");
+                            break;
+                        case "search":
+                            if(message.Substring(1).Contains(" "))
+                                await searchForWord(e.Message.Chat.Id, message.Split(" ").Where((e, id) => id != 0));
                             break;
                         default:
                             await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Незрозуміла команда");
@@ -263,7 +271,6 @@ namespace Stress_checker
 
         async Task Game(long user_id, long chat_id, ushort amount = 20, bool nextWord = false){
             List<int> word_array = new List<int>();
-            bool newWord = false;
             if(!(await in_proggress((int)user_id))){
                 await using (var cmd = new NpgsqlCommand($"SELECT id FROM words ORDER BY random() LIMIT {amount};", DBConnection))
                 await using (var reader = await cmd.ExecuteReaderAsync())
@@ -277,7 +284,6 @@ namespace Stress_checker
                     cmd.ExecuteNonQueryAsync().Wait();
                 }
 
-                newWord = true;
             }else{
                 await using (var cmd = new NpgsqlCommand($"SELECT words FROM users WHERE userid = {user_id};", DBConnection))
                 await using (var reader = await cmd.ExecuteReaderAsync())
@@ -400,6 +406,71 @@ namespace Stress_checker
             }
             keyboard = keyboard.Append(row);
         }
-    }
+        async Task searchForWord(long chat_id, IEnumerable<string> words){
+                // https://goroh.pp.ua/Тлумачення
+                // link of site to parse from
+                //
+                //  Beginning of the useful info:
+                //  <div class="list">
+                //
+                //  End of useful info:
+                //  <p class="source-info">
 
+            List<string> stressed_words = new List<string>();
+            foreach(var item in words){
+                var requets = (HttpWebRequest)WebRequest.Create($"https://goroh.pp.ua/Тлумачення/{item}");
+                HttpWebResponse responce;
+                try{
+                responce = (HttpWebResponse)requets.GetResponse();
+                }catch(System.Net.WebException){
+                    await botClient.SendTextMessageAsync(chat_id, $"{item} ( Не знайдено слова )");
+                    continue;
+                }
+
+
+                if(responce.StatusCode == HttpStatusCode.OK){
+
+                    var eonc = string.IsNullOrWhiteSpace(responce.CharacterSet);
+                    StreamReader stream;
+
+                    if(string.IsNullOrWhiteSpace(responce.CharacterSet))
+                        stream = new StreamReader(responce.GetResponseStream());
+                    else
+                        stream = new StreamReader(responce.GetResponseStream(), System.Text.Encoding.GetEncoding(responce.CharacterSet));
+
+                    string rawData = "";
+                    bool firstBegining = true;
+                    while(!stream.EndOfStream){
+                        string line = await stream.ReadLineAsync();
+                        if(line.Contains("<div class=\"list\">") && firstBegining){
+                            rawData+=line;
+                            firstBegining = !firstBegining;
+                        }
+                        if(line.Contains("<p class=\"source-info\">")){
+                            rawData+=line;
+                            break;
+                        }
+
+                        if(!firstBegining)
+                            rawData+=line;
+                    }
+                    if(! string.IsNullOrEmpty(rawData)){
+                        // stressed_words.Add(await TextProcessing(rawData));
+                        await botClient.SendTextMessageAsync(chat_id, (await TextProcessing(rawData)).ToLower());
+                    }
+
+                }             
+            }
+        }
+        async Task<string> TextProcessing(string rawData){
+
+            // for now only word stress, so beginning is
+            // "uppercase">
+            // and end is </
+
+            var a = rawData.Split("\"uppercase\">")[1];
+
+            return a.Substring(0, a.IndexOf("</"));
+        }
+    }
 }

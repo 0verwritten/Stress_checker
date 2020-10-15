@@ -11,7 +11,3 @@ id serial,
 word varchar(30) unique,
 definition text
 );
-create table admins (
-id serial,
-userid int not null references users(userid)
-);
