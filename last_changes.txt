@@ -1,5 +1,0 @@
-version 0.3
-
-1) moved admins store place from database to file where all configs are stored
-2) removed unused logging property in custum application_data class
-3) added search command and it's functionality bt parsing site goroh.pp.com
