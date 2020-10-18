@@ -101,7 +101,7 @@ namespace Stress_checker
                             await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Так, ви в грі");
                             break;
                         default:
-                            await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Незрозуміла команда");
+                            await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Ви в грі");
                             break;
                     }
                 }if(e.Message.Text == "Готово"){
@@ -110,6 +110,7 @@ namespace Stress_checker
                     using (var cmd = new NpgsqlCommand($"update users set answers = array_append(answers, '{e.Message.Text}'), ingame = true where userid = @p", DBConnection)){
                         cmd.Parameters.AddWithValue("p", e.Message.From.Id);
                         cmd.ExecuteNonQueryAsync().Wait();
+                        await cmd.DisposeAsync();
                     }
                 }
             }else{
@@ -159,48 +160,72 @@ namespace Stress_checker
         }
         async Task<bool> in_proggress(int user_id){
             try{
-                await using (var cmd = new NpgsqlCommand($"SELECT ingame FROM users WHERE userid = {user_id};", DBConnection))
-                await using (var reader = await cmd.ExecuteReaderAsync())
-                while (await reader.ReadAsync()){
-                    return reader.GetFieldValue<bool>(0);
+                while(DBConnection.State == System.Data.ConnectionState.Executing){ await Task.Delay(500); }
+                if(DBConnection.State == System.Data.ConnectionState.Open)
+                await using (var cmd = new NpgsqlCommand($"SELECT ingame FROM users WHERE userid = {user_id};", DBConnection)){
+                    await using (var reader = await cmd.ExecuteReaderAsync()){
+                        while (await reader.ReadAsync()){
+                            return reader.GetFieldValue<bool>(0);
+                        }
+                    }
+                    cmd.Dispose();
                 }
-            }catch(Npgsql.NpgsqlOperationInProgressException){
-                return false;
+                
+            }catch(Npgsql.NpgsqlOperationInProgressException e){
+                Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[in_progress][{e.Data}]: {e.Message}");
+                await Task.Delay(500);
+                return await in_proggress(user_id);
+            }catch(System.InvalidOperationException e){
+                Console.WriteLine(1);
+                Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[in_progress][{e.Data}]: {e.Message}");
+                await in_proggress(user_id);
+            }catch(System.IO.EndOfStreamException){
+                return true;
             }
             return false;
         }
-        Exception registerUser(int user_id, string key){
-            if(applicationData.invite_code == null || key != applicationData.invite_code){
+        Exception registerUser(int user_id, string key, bool inProggressError = false){
+            if(inProggressError && (applicationData.invite_code == null || key != applicationData.invite_code)){
                 return applicationData.invite_code == null ? new Exception("Пусте поле коду запрошення") : new Exception("Не правильне поле коду запрошення");
             }
-            if(isRegistered(user_id).Result){
+            if(inProggressError && isRegistered(user_id).Result){
                 return new Exception("Ви вже зареєстровані");
             }
             try{
                 using (var cmd = new NpgsqlCommand("insert into users (userid) values (@v);", DBConnection)){
                     cmd.Parameters.AddWithValue("v", user_id);
                     cmd.ExecuteNonQueryAsync().Wait();
+                    cmd.Dispose();
                 }
             }catch(System.AggregateException e){
-                Console.WriteLine(e.Data);
+                Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[registerUser][{e.Data}]: {e.Message}");
                 return new Exception("Ви вже зареєстровані");
+            }catch(Npgsql.NpgsqlOperationInProgressException e){
+                Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[registerUser][{e.Data}]: {e.Message}");
+                return registerUser(user_id, key, true);
             }
 
             return null;
         }
         async Task<bool> isRegistered(int user_id, long? chat_id = null){
-            
-            await using (var cmd = new NpgsqlCommand($"SELECT id FROM users WHERE userid="+user_id, DBConnection))
-            await using (var reader = await cmd.ExecuteReaderAsync())
-            while (await reader.ReadAsync()){
-                if(chat_id==null){
-                    return reader.FieldCount != 0;
+            try{
+                await using (var cmd = new NpgsqlCommand($"SELECT id FROM users WHERE userid="+user_id, DBConnection))
+                await using (var reader = await cmd.ExecuteReaderAsync())
+                while (await reader.ReadAsync()){
+                    if(chat_id==null){
+                        
+                        return reader.FieldCount != 0;
+                    }
+                    if(reader.FieldCount != 0){
+                        await botClient.SendTextMessageAsync(chat_id, "Ви зареєстровані");
+                    }else{
+                        await botClient.SendTextMessageAsync(chat_id, "Ви не зареєстровані");
+                    }
+                    await cmd.DisposeAsync();
                 }
-                if(reader.FieldCount != 0){
-                    await botClient.SendTextMessageAsync(chat_id, "Ви зареєстровані");
-                }else{
-                    await botClient.SendTextMessageAsync(chat_id, "Ви не зареєстровані");
-                }
+            }catch(Npgsql.NpgsqlOperationInProgressException e){
+                Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[isRegistered][{e.Data}]: {e.Message}");
+                return await isRegistered(user_id, chat_id);
             }
 
             return false;
@@ -228,6 +253,7 @@ namespace Stress_checker
                 while(reader.Read()){
                     return reader.GetInt32(0);
                 }
+                await comm.DisposeAsync();
             }
             }catch(System.InvalidOperationException){
                 await Task.Delay(2000);
@@ -248,6 +274,7 @@ namespace Stress_checker
                             cmd.Parameters.AddWithValue("w", words.word);
                             cmd.Parameters.AddWithValue("p", words.definition ?? "");
                             cmd.ExecuteNonQueryAsync().Wait();
+                            await cmd.DisposeAsync();
                         }
                     }
                 }
@@ -264,36 +291,50 @@ namespace Stress_checker
             using( var comm = new NpgsqlCommand("update users set words=null, answers=null, ingame=false where userid=@u", DBConnection)){
                 comm.Parameters.AddWithValue("u", user_id);
                 await comm.ExecuteNonQueryAsync();
+                await comm.DisposeAsync();
             }
 
-            await botClient.SendTextMessageAsync(chat_id, "Вийшло вийти");
+            await botClient.SendTextMessageAsync(chat_id, "Вийшло вийти", replyMarkup: new Telegram.Bot.Types.ReplyMarkups.ReplyKeyboardRemove());
         }
 
         async Task Game(long user_id, long chat_id, ushort amount = 20, bool nextWord = false){
             List<int> word_array = new List<int>();
             if(!(await in_proggress((int)user_id))){
+                while(DBConnection.State == System.Data.ConnectionState.Executing){ await Task.Delay(500); }
+                if(DBConnection.State == System.Data.ConnectionState.Open)
+                using (var cmd = new NpgsqlCommand($"update users set words = @w, ingame = true where userid = @p", DBConnection)){
+                    cmd.Parameters.AddWithValue("w", word_array);
+                    cmd.Parameters.AddWithValue("p", user_id);
+                    cmd.ExecuteNonQueryAsync().Wait();
+                    await cmd.DisposeAsync();
+                }
                 await using (var cmd = new NpgsqlCommand($"SELECT id FROM words ORDER BY random() LIMIT {amount};", DBConnection))
-                await using (var reader = await cmd.ExecuteReaderAsync())
-                while (await reader.ReadAsync()){
-                    word_array.Add(reader.GetInt32(0));
+                await using (var reader = await cmd.ExecuteReaderAsync()){
+                    while (await reader.ReadAsync()){
+                        word_array.Add(reader.GetInt32(0));
+                    }
                 }
 
                 using (var cmd = new NpgsqlCommand($"update users set words = @w, ingame = true where userid = @p", DBConnection)){
                     cmd.Parameters.AddWithValue("w", word_array);
                     cmd.Parameters.AddWithValue("p", user_id);
                     cmd.ExecuteNonQueryAsync().Wait();
+                    await cmd.DisposeAsync();
                 }
 
             }else{
                 await using (var cmd = new NpgsqlCommand($"SELECT words FROM users WHERE userid = {user_id};", DBConnection))
-                await using (var reader = await cmd.ExecuteReaderAsync())
-                while (await reader.ReadAsync()){
-                    word_array = reader.GetFieldValue<List<int>>(0);
+                await using (var reader = await cmd.ExecuteReaderAsync()){
+                    while (await reader.ReadAsync()){
+                        word_array = reader.GetFieldValue<List<int>>(0);
+                    }
+                    await cmd.DisposeAsync();
                 }
                 if(word_array.Count == 0 || word_array == null){
                     await botClient.SendTextMessageAsync(chat_id, "Це все на сьогодні", replyMarkup: new Telegram.Bot.Types.ReplyMarkups.ReplyKeyboardRemove());
                     await using(var comand = new NpgsqlCommand($"update users set ingame=false where userid={user_id};", DBConnection)){
                         await comand.ExecuteNonQueryAsync();
+                        await comand.DisposeAsync();
                         return;
                     }
                 }
@@ -319,7 +360,8 @@ namespace Stress_checker
                     answers = reader.GetFieldValue<List<string>>(0);
                     if(answers == null || answers.Count == 0)
                         throw new System.InvalidCastException("Null ref exception");
-                    }catch(System.InvalidCastException){
+                    }catch(System.InvalidCastException e){
+                        Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[Game][{e.Data}]: {e.Message}");
                         await botClient.SendTextMessageAsync(chat_id, $"Виших відповідей немає", 
                             replyMarkup: new Telegram.Bot.Types.ReplyMarkups.ReplyKeyboardRemove());
                         await botClient.SendTextMessageAsync(chat_id, $"Правильні: {string.Join(", ", correct)}");
@@ -422,7 +464,8 @@ namespace Stress_checker
                 HttpWebResponse responce;
                 try{
                 responce = (HttpWebResponse)requets.GetResponse();
-                }catch(System.Net.WebException){
+                }catch(System.Net.WebException e){
+                    Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[searchForWord][{e.Data}]: {e.Message}");
                     await botClient.SendTextMessageAsync(chat_id, $"{item} ( Не знайдено слова )");
                     continue;
                 }
