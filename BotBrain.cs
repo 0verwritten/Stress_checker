@@ -618,6 +618,7 @@ namespace Stress_checker
             }
             botClient.SendTextMessageAsync(chat_id, $"Додано слов{ (searched.Count == 1 ? "" : "а") }: {string.Join(", ", searched)}").Wait();
 
+
             return true;
         }
     }
