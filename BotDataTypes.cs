@@ -34,6 +34,7 @@ namespace Stress_checker{
         ///     List of application's administrators
         /// </summary>
         public uint[] admins { get; set; }
+        
         public ApplicationData() {}
     }
     
