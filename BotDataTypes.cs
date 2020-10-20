@@ -3,16 +3,45 @@ using System.IO;
 
 namespace Stress_checker{
     class ApplicationData{
-        public string telegram_token { get; set; } // telegram bot token
-        public string db_connection_string { get; set; } // connection string for database ( PostgreSQL )
-        public string stresses_file { get; set; } = Path.Combine(Environment.CurrentDirectory, "stresses.txt"); // file where all stresses for database restore is stored
-        public string invite_code { get; set; } // register password
-        public bool forceRestore { get; set; } // to rewrite all data in database
-        public uint[] admins { get; set; } // admins list
+
+        ///
+        /// <summary>
+        ///     Telegram bot token of this application
+        /// </summary>
+        public string telegram_token { get; set; }
+        ///
+        /// <summary>
+        ///     Connection string to connect application to PostgreSQL server
+        /// </summary>
+        public string db_connection_string { get; set; }
+        ///
+        /// <summary>
+        ///     File where all stresses for database restore is stored
+        /// </summary>
+        public string stresses_file { get; set; } = Path.Combine(Environment.CurrentDirectory, "stresses.txt");
+        ///
+        /// <summary>
+        ///     Password used to register in telegram chat
+        /// </summary>
+        public string invite_code { get; set; }
+        ///
+        /// <summary>
+        ///     Property that makes force restore for database
+        /// </summary>
+        public bool forceRestore { get; set; }
+        ///
+        /// <summary>
+        ///     List of application's administrators
+        /// </summary>
+        public uint[] admins { get; set; }
         public ApplicationData() {}
     }
     
-    class Words{ // class that shows one record in table with words ( in database )
+    ///
+    /// <summary>
+    ///     Instance of one record in table with words ( in database )
+    /// </summary>
+    class Words{
         public int? id { get; set; }
         public string word { get; set; }
         public string definition { get; set; }

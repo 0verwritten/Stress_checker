@@ -77,7 +77,13 @@ namespace Stress_checker
                             break;
                         case "search":
                             if(message.Substring(1).Contains(" "))
-                                await searchForWord(e.Message.Chat.Id, message.Split(" ").Where((e, id) => id != 0));
+                                await searchForWord(chat_id: e.Message.Chat.Id, words: message.Split(" ").Where((e, id) => id != 0).ToArray<string>());
+                            break;
+                        case "is_admin":
+                            await botClient.SendTextMessageAsync(e.Message.Chat.Id, $"{applicationData.admins.Contains((uint)e.Message.From.Id)}");
+                            break;
+                        case "add":
+                            var resu = AddWordToDB(e.Message.Chat.Id, message.Split(" ").Where((e, id) => id != 0).ToList());
                             break;
                         default:
                             await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Незрозуміла команда");
@@ -154,7 +160,15 @@ namespace Stress_checker
 3)  Якщо ви пам'ятаєте, як потрібно наголошувати слово:(Ще у розробці)
 /search слово
 
-4)  Довідка по використанню бота
+4)  Debug commands
+/my_id
+/update_data
+/is_admin
+
+5)  Для адміністрації
+/add_word <слово/слова через пропуск>
+
+-)  Довідка по використанню бота
 /help
 ");
         }
@@ -384,7 +398,10 @@ namespace Stress_checker
                     if(correctAns == correct.Count){
                         await botClient.SendTextMessageAsync(chat_id, $"Чудово, усе правильно");
                     }else{
-                        await botClient.SendTextMessageAsync(chat_id, $"У вас правильних відповідей: {correctAns}/{correct.Count}");
+                        if(correct.Count == 1 || correctAns == 0)
+                            await botClient.SendTextMessageAsync(chat_id, "Неправильно");
+                        else
+                            await botClient.SendTextMessageAsync(chat_id, $"У вас правильних відповідей: {correctAns}/{correct.Count}");
                         await botClient.SendTextMessageAsync(chat_id, $"Правильні: {string.Join(", ", correct)}");
                     }
                 }
@@ -414,7 +431,8 @@ namespace Stress_checker
             for(var i = 0;i < word.Length; i++){
                 if(vowels.Contains(char.ToLower(word[i]))){
                     var w = new System.Text.StringBuilder(word.ToLower());
-                    w[i] = char.ToUpper(w[i]);
+                    w = w.Insert(i+1, ((char)769).ToString()); // with ` character
+                    // w[i] = char.ToUpper(w[i]); // with big letter insted
                     res.Add(w.ToString());
                 }
             }
@@ -428,7 +446,8 @@ namespace Stress_checker
             for(var i = 0;i < correctOption.Length; i++){
                 if(char.ToUpper(correctOption[i]) == correctOption[i]){
                     var w = new System.Text.StringBuilder(correctOption.ToLower());
-                    w[i] = char.ToUpper(w[i]);
+                    w = w.Insert(i+1, ((char)769).ToString()); // with ` character
+                    // w[i] = char.ToUpper(w[i]); // with ` character
                     res.Add(w.ToString());
                 }
             }
@@ -448,7 +467,11 @@ namespace Stress_checker
             }
             keyboard = keyboard.Append(row);
         }
-        async Task searchForWord(long chat_id, IEnumerable<string> words){
+
+        /// <summary>
+        ///     Search for word stress and returns list of it or writes it to chat by chat_id
+        /// </summary>
+        async Task<List<string>> searchForWord(string[] words, long? chat_id = null){
                 // https://goroh.pp.ua/Тлумачення
                 // link of site to parse from
                 //
@@ -459,14 +482,23 @@ namespace Stress_checker
                 //  <p class="source-info">
 
             List<string> stressed_words = new List<string>();
-            foreach(var item in words){
-                var requets = (HttpWebRequest)WebRequest.Create($"https://goroh.pp.ua/Тлумачення/{item}");
+            // string res = "";
+            Telegram.Bot.Types.Message message = new Telegram.Bot.Types.Message();
+            if(chat_id != null)
+                message = await botClient.SendTextMessageAsync(chat_id, "0% зроблено");
+            for(var i = 0; i < words.Count(); i++){
+                var requets = (HttpWebRequest)WebRequest.Create($"https://goroh.pp.ua/Тлумачення/{words[i]}");
                 HttpWebResponse responce;
                 try{
                 responce = (HttpWebResponse)requets.GetResponse();
                 }catch(System.Net.WebException e){
                     Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[searchForWord][{e.Data}]: {e.Message}");
-                    await botClient.SendTextMessageAsync(chat_id, $"{item} ( Не знайдено слова )");
+                    // message = await botClient.EditMessageTextAsync(chat_id, message.MessageId, $"{message.Text}\n{words[i]} ( Не знайдено слова )");
+                    
+                    // res+= $"{words[i]} (Не знайдено слова) ";
+                    stressed_words.Add($"{words[i]} (Не знайдено слова)");
+                    if(chat_id != null && message.Text != $"{ Math.Round((( (float)i + 1f)/ (float)words.Length)*100, 0)}% зроблено")
+                        message = await botClient.EditMessageTextAsync(chat_id, message.MessageId, $"{ Math.Round((( (float)i + 1f)/ (float)words.Length)*100, 0)}% зроблено");
                     continue;
                 }
 
@@ -498,14 +530,25 @@ namespace Stress_checker
                             rawData+=line;
                     }
                     if(! string.IsNullOrEmpty(rawData)){
-                        // stressed_words.Add(await TextProcessing(rawData));
-                        await botClient.SendTextMessageAsync(chat_id, (await TextProcessing(rawData)).ToLower());
+                        // res += TextProcessing(rawData).ToLower()+" ";
+                        stressed_words.Add(TextProcessing(rawData).ToLower());
                     }
 
-                }             
+                }
+                if(chat_id != null && message.Text != $"{ Math.Round((( (float)i + 1f)/ (float)words.Length)*100, 0)}% зроблено")
+                    message = await botClient.EditMessageTextAsync(chat_id, message.MessageId, $"{ Math.Round((( (float)i + 1f)/ (float)words.Length)*100, 0)}% зроблено");        
             }
+            if(chat_id != null){
+                await botClient.SendTextMessageAsync(chat_id, string.Join(' ', stressed_words));
+                await botClient.DeleteMessageAsync(chat_id, message.MessageId);
+            }
+            return stressed_words;
         }
-        async Task<string> TextProcessing(string rawData){
+
+        /// <summary>
+        ///     Getting word from html page got from goroh.pp.com site
+        /// </summary>
+        string TextProcessing(string rawData){
 
             // for now only word stress, so beginning is
             // "uppercase">
@@ -514,6 +557,68 @@ namespace Stress_checker
             var a = rawData.Split("\"uppercase\">")[1];
 
             return a.Substring(0, a.IndexOf("</"));
+        }
+
+        /// <summary>
+        ///      Converting ` character to big letter
+        /// </summary>
+        void TextProcessing(ref List<string> stressedList){
+
+            for(var i = 0;i < stressedList.Count(); i++){
+                var temp = new System.Text.StringBuilder(stressedList[i]);
+                for ( var j = temp.Length - 1;j > 0; j-- ){
+                    if((int)temp[j] == 769 && j != 0){
+                        temp = temp.Remove(j, 1);
+                        temp[j-1] = char.ToUpper(temp[j-1]);
+                    }
+                }
+                stressedList[i] = temp.ToString();
+            }
+
+        }
+        bool AddWordToDB(long chat_id, List<string> rawWords){
+            if(!applicationData.admins.Contains((uint)chat_id))
+                throw new Exception($"not an admin trying to add {rawWords}");
+            
+            using(var cmd = new NpgsqlCommand($"SELECT word FROM words WHERE LOWER(word)=LOWER('{ string.Join("') OR LOWER(word)=LOWER(\'", rawWords) }');", DBConnection))
+            using(var reader  = cmd.ExecuteReaderAsync().Result){
+                while(reader.ReadAsync().Result){
+                    var word = rawWords.FirstOrDefault( e => e.ToLower() == reader.GetString(0).ToLower() );
+                    rawWords.Remove( word );
+                    if(!string.IsNullOrEmpty(word)){
+                        botClient.SendTextMessageAsync(chat_id, $"Слово '{word}' вже є в таблиці");
+                    }
+                }
+            }
+            if(rawWords.Count == 0){
+                return false;
+            }
+
+            var searched = searchForWord(rawWords.ToArray()).Result;
+            
+            rawWords = null;
+
+            for( var i = 0; i < searched.Count; i++ ){
+                if(searched[i].Contains("Не знайдено слова")){
+                    botClient.SendTextMessageAsync(chat_id, $"Слова '{searched[i]}' не знайдено").Wait();
+                    searched.RemoveAt(i);
+                    continue;
+                }
+                if( ! searched[i].Contains((char)769) ){
+                    botClient.SendTextMessageAsync(chat_id, $"Слово '{searched[i]}' має тільки один наоголос").Wait();
+                    searched.RemoveAt(i);
+                    continue;
+                }
+            }
+
+            TextProcessing(ref searched);
+
+            using(var cmd = new NpgsqlCommand($"insert into words(word) values ('{ string.Join("'), ('", searched) }');", DBConnection)){
+                cmd.ExecuteNonQuery();
+            }
+            botClient.SendTextMessageAsync(chat_id, $"Додано слов{ (searched.Count == 1 ? "" : "а") }: {string.Join(", ", searched)}").Wait();
+
+            return true;
         }
     }
 }
