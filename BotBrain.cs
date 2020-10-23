@@ -19,6 +19,7 @@ namespace Stress_checker
         TelegramBotClient botClient;
         NpgsqlConnection DBConnection;
         readonly char[] vowels = new char[] {'а', 'е', 'и', 'і', 'о', 'у', 'я', 'ю', 'є', 'ї'};
+        readonly char[] additional = new char[] {'-', '\'', '`'};
         public StressChecker(string filename = "config.json"){
             using ( var stream = File.OpenRead(@$"{filename}") ){
                 applicationData = JsonSerializer.DeserializeAsync<ApplicationData>(stream).Result;
@@ -105,6 +106,12 @@ namespace Stress_checker
                             break;
                         case "in_game":
                             await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Так, ви в грі");
+                            break;
+                        case "search":
+                            if(await IsCurrentWord(user_id: e.Message.From.Id, words: message.ToLower().Split(" ").Where((e, id) => id != 0).ToArray<string>()))
+                                await searchForWord(chat_id: e.Message.Chat.Id, words: message.Split(" ").Where((e, id) => id != 0).ToArray<string>());
+                            else
+                                await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Слова з гри шукати не можна");
                             break;
                         default:
                             await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Ви в грі");
@@ -444,7 +451,9 @@ namespace Stress_checker
             List<string> res = new List<string>();
 
             for(var i = 0;i < correctOption.Length; i++){
-                if(char.ToUpper(correctOption[i]) == correctOption[i]){
+                if(additional.Contains(correctOption[i]))
+                    continue;
+                else if(char.ToUpper(correctOption[i]) == correctOption[i]){
                     var w = new System.Text.StringBuilder(correctOption.ToLower());
                     w = w.Insert(i+1, ((char)769).ToString()); // with ` character
                     // w[i] = char.ToUpper(w[i]); // with ` character
@@ -484,6 +493,7 @@ namespace Stress_checker
             List<string> stressed_words = new List<string>();
             // string res = "";
             Telegram.Bot.Types.Message message = new Telegram.Bot.Types.Message();
+
             if(chat_id != null)
                 message = await botClient.SendTextMessageAsync(chat_id, "0% зроблено");
             for(var i = 0; i < words.Count(); i++){
@@ -543,6 +553,26 @@ namespace Stress_checker
                 await botClient.DeleteMessageAsync(chat_id, message.MessageId);
             }
             return stressed_words;
+        }
+
+        /// <summary>
+        ///     Getting if user is trying to search his word in game
+        /// </summary
+        async Task<bool> IsCurrentWord(long user_id, string[] words){
+
+            int curUserWordId = 0;
+            using(var cmd = new NpgsqlCommand($"select words from users where userid={user_id} limit 1;", DBConnection))
+                using (var reader = await cmd.ExecuteReaderAsync())
+                    while(reader.Read())
+                        curUserWordId = reader.GetFieldValue<List<int>>(0)[0];
+
+            using(var cmd  = new NpgsqlCommand($"select word from words where id={curUserWordId} limit 1;", DBConnection))
+                using(var reader = cmd.ExecuteReader())
+                    while(reader.Read()){
+                        return !words.Contains(reader.GetString(0).ToLower());
+                    }
+
+            return false;
         }
 
         /// <summary>
