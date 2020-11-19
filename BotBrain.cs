@@ -49,7 +49,7 @@ namespace Stress_checker
                     switch(message.Substring(1).Contains(" ") ? message.Substring(1).Split(" ")[0] : message.Substring(1)){
                         case "start":
                         case "help":
-                            await StartMessage(e.Message.Chat.Id);
+                            await StartMessage(e.Message.Chat.Id, e.Message.From.Id);
                             break;
                         case "register":
                             var error = registerUser(e.Message.From.Id, e.Message.Text.Contains(" ") ? e.Message.Text.Split(" ")[1] : "");
@@ -67,11 +67,15 @@ namespace Stress_checker
                             await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Ні, ви не в грі");
                             break;
                         case "update_data":
-                            bool res = appDataUpdate();
-                            if(res)
-                                await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Успішно оновдено данні");
-                            else
-                                await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Не вийшло оновити данні");
+                            if(applicationData.admins.Contains((uint)e.Message.From.Id)){
+                                bool res = appDataUpdate();
+                                if(res)
+                                    await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Успішно оновдено данні");
+                                else
+                                    await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Не вийшло оновити данні");
+                            }else{
+                                await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Ви не адміністратор");
+                            }
                             break;
                         case "my_id":
                             await botClient.SendTextMessageAsync(e.Message.From.Id, $"Ваш ID: {e.Message.From.Id}");
@@ -99,7 +103,7 @@ namespace Stress_checker
                 if(message[0] == '/'){
                     switch(message.Substring(1).Contains(" ") ? message.Substring(1).Split(" ")[0] : message.Substring(1)){
                         case "help":
-                            await StartMessage(e.Message.Chat.Id);
+                            await StartMessage(e.Message.Chat.Id, e.Message.From.Id);
                             break;
                         case "quit":
                             await QuitTheGame(e.Message.From.Id, e.Message.Chat.Id);
@@ -117,9 +121,13 @@ namespace Stress_checker
                             await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Ви в грі");
                             break;
                     }
-                }if(e.Message.Text == "Готово"){
+                }if(e.Message.Text == ".Наступне.") // previous Готово
                     await Game(e.Message.From.Id, e.Message.Chat.Id, nextWord: true);
-                }else if(!e.Message.Text.Contains("/") && !e.Message.Text.Contains(" ")){
+                else if(e.Message.Text == ".Стоп.")
+                    await QuitTheGame(e.Message.From.Id, e.Message.Chat.Id);
+                else if (e.Message.Text == ".Видалити.")
+                    await DeleteLastMessage(e.Message.From.Id, e.Message.Chat.Id);
+                else if(!e.Message.Text.Contains("/") && !e.Message.Text.Contains(" ")){
                     using (var cmd = new NpgsqlCommand($"update users set answers = array_append(answers, '{e.Message.Text}'), ingame = true where userid = @p", DBConnection)){
                         cmd.Parameters.AddWithValue("p", e.Message.From.Id);
                         cmd.ExecuteNonQueryAsync().Wait();
@@ -147,8 +155,8 @@ namespace Stress_checker
                 }
             }
         }
-        async Task StartMessage(long chat_id){
-            await botClient.SendTextMessageAsync(chat_id, @"Це бот для перевірки наголосів. Для того, щоб це зробити, вам потрібно:
+        async Task StartMessage(long chat_id, int user_id){
+            await botClient.SendTextMessageAsync(chat_id, $@"Це бот для перевірки наголосів. Для того, щоб це зробити, вам потрібно:
 1)  Зареєструватися за допомогою
 /register <код запрошення>
 
@@ -167,16 +175,16 @@ namespace Stress_checker
 3)  Якщо ви пам'ятаєте, як потрібно наголошувати слово:(Ще у розробці)
 /search слово
 
-4)  Debug commands
-/my_id
-/update_data
-/is_admin
-
-5)  Для адміністрації
+4)  Для адміністрації
 /add_word <слово/слова через пропуск>
 
--)  Довідка по використанню бота
+5)  Довідка по використанню бота
 /help
+{ (applicationData.admins.Contains((uint)user_id) ? @"
+6)  Debug commands
+/my_id
+/update_data
+/is_admin" : "" ) }
 ");
         }
         async Task<bool> in_proggress(int user_id){
@@ -194,6 +202,8 @@ namespace Stress_checker
                 
             }catch(Npgsql.NpgsqlOperationInProgressException e){
                 Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[in_progress][{e.Data}]: {e.Message}");
+                await DBConnection.CloseAsync();
+                await DBConnection.OpenAsync();
                 await Task.Delay(500);
                 return await in_proggress(user_id);
             }catch(System.InvalidOperationException e){
@@ -302,6 +312,30 @@ namespace Stress_checker
             }
             return true;
         }
+        async Task DeleteLastMessage(long user_id, long chat_id){
+            List<string> answers = null;
+            using (var cmd = new Npgsql.NpgsqlCommand($"SELECT answers FROM users WHERE userid = {user_id}", DBConnection))
+            using (var reader  = await cmd.ExecuteReaderAsync()){
+                while(await reader.ReadAsync())
+                    try{
+                        answers = reader.GetFieldValue<List<string>>(0);
+                    }
+                    catch (System.InvalidCastException e){
+                        Console.WriteLine($"{DateTime.Now.ToString("[dd/MM/yyyy][HH:mm]")}[DeleteLastMessage][{e.Data}]: {e.Message}");
+                    }
+
+                await cmd.DisposeAsync();
+            }
+            if( answers != null && (answers?.Count ?? 0) != 0 ){
+                using (var cmd = new Npgsql.NpgsqlCommand($"UPDATE users SET answers = array_remove(answers, '{ answers[answers.Count - 1] }') WHERE userid = {user_id};", DBConnection)){
+                    await cmd.ExecuteNonQueryAsync();
+                    cmd.Dispose();
+                }
+            }
+            // Telegram.Bot.Types.Update lastMessage = ().Last();
+            // if(!lastMessage.Message.From.IsBot)
+            //     await botClient.DeleteMessageAsync(chat_id, lastMessage.Message.MessageId);
+        }
 
         async Task QuitTheGame(long user_id, long chat_id){
             if(!await in_proggress((int)user_id)){
@@ -386,6 +420,7 @@ namespace Stress_checker
                         await botClient.SendTextMessageAsync(chat_id, $"Виших відповідей немає", 
                             replyMarkup: new Telegram.Bot.Types.ReplyMarkups.ReplyKeyboardRemove());
                         await botClient.SendTextMessageAsync(chat_id, $"Правильні: {string.Join(", ", correct)}");
+                        await Game(user_id, chat_id, amount);
                         return;
                     }
                 }
@@ -426,7 +461,9 @@ namespace Stress_checker
             KeyboardAppend(out keys, options, colSize: 3);
             var keyboard = new Telegram.Bot.Types.ReplyMarkups.ReplyKeyboardMarkup(keys);
             keyboard.Keyboard = keyboard.Keyboard.Append( new Telegram.Bot.Types.ReplyMarkups.KeyboardButton[]{
-                new Telegram.Bot.Types.ReplyMarkups.KeyboardButton("Готово")
+                new Telegram.Bot.Types.ReplyMarkups.KeyboardButton(".Стоп."),
+                new Telegram.Bot.Types.ReplyMarkups.KeyboardButton(".Наступне."),
+                new Telegram.Bot.Types.ReplyMarkups.KeyboardButton(".Видалити.") // or this character ❌
             });
             
             await botClient.SendTextMessageAsync(chat_id, $"Який наголос правильний?{ (word.definition == "" ? "" : "\nЗначення: " + word.definition) }", replyMarkup: keyboard);
