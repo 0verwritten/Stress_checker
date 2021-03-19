@@ -17,7 +17,6 @@ namespace Stress_checker
         static void Main(string[] args)
         {
             var bot = new StressChecker(filename: Path.Combine(Environment.CurrentDirectory, "config.json" ) );
-
             bot.Start().Wait();
         }
     }

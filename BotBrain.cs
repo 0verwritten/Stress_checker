@@ -20,17 +20,21 @@ namespace Stress_checker
         NpgsqlConnection DBConnection;
         readonly char[] vowels = new char[] {'а', 'е', 'и', 'і', 'о', 'у', 'я', 'ю', 'є', 'ї'};
         readonly char[] additional = new char[] {'-', '\'', '`'};
+        readonly string fileName;
         public StressChecker(string filename = "config.json"){
+            fileName = filename;
             using ( var stream = File.OpenRead(@$"{filename}") ){
                 applicationData = JsonSerializer.DeserializeAsync<ApplicationData>(stream).Result;
             }
 
             DBConnection  = new NpgsqlConnection(applicationData.db_connection_string);
             botClient = new Telegram.Bot.TelegramBotClient(applicationData.telegram_token);
-            // stresseRestore();
+            DBConnection.Open();
+            stresseRestore().Wait();
         }
         public async Task Start(){
-            DBConnection.Open();
+            if(DBConnection.State == System.Data.ConnectionState.Closed)
+                DBConnection.Open();
 
             botClient.OnMessage += onMessageSend;
             botClient.OnMessageEdited += onMessageChange;
@@ -73,6 +77,23 @@ namespace Stress_checker
                                     await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Успішно оновдено данні");
                                 else
                                     await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Не вийшло оновити данні");
+                            }else{
+                                await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Ви не адміністратор");
+                            }
+                            break;
+                        case "create_invite_code":
+                            if(applicationData.admins.Contains((uint)e.Message.From.Id)){
+                                createInviteCode(e.Message.Chat.Id, e.Message.Text.Substring(1).Contains(" ") ? 
+                                    (Convert.ToUInt16(e.Message.Text.Substring(1).Split(" ")[1]) >= 7? Convert.ToUInt16(e.Message.Text.Substring(1).Split(" ")[1]) : 6) 
+                                        : 
+                                    (ushort)24);
+                            }else{
+                                await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Ви не адміністратор");
+                            }
+                            break;
+                        case "delete_invite_code":
+                            if(applicationData.admins.Contains((uint)e.Message.From.Id)){
+                                removeInviteCode(e.Message.Chat.Id);
                             }else{
                                 await botClient.SendTextMessageAsync(e.Message.Chat.Id, "Ви не адміністратор");
                             }
@@ -128,6 +149,8 @@ namespace Stress_checker
                 else if (e.Message.Text == ".Видалити.")
                     await DeleteLastMessage(e.Message.From.Id, e.Message.Chat.Id);
                 else if(!e.Message.Text.Contains("/") && !e.Message.Text.Contains(" ")){
+                    if(DBConnection.State == System.Data.ConnectionState.Closed)
+                        DBConnection.Open();
                     using (var cmd = new NpgsqlCommand($"update users set answers = array_append(answers, '{e.Message.Text}'), ingame = true where userid = @p", DBConnection)){
                         cmd.Parameters.AddWithValue("p", e.Message.From.Id);
                         cmd.ExecuteNonQueryAsync().Wait();
@@ -149,7 +172,7 @@ namespace Stress_checker
                     violation += reader.GetInt32(0);
                 }
                 await botClient.SendTextMessageAsync(e.Message.Chat.Id, $"Changing text isn't allowed. If you change any text you entered, you will have {3-violation} warnings and then you will get ban\n2 attempts left");
-                using (var cmd = new NpgsqlCommand("update words set violation = @v where userid = {e.Message.From.Id}", DBConnection)){
+                using (var cmd = new NpgsqlCommand($"update words set violation = @v where userid = {e.Message.From.Id}", DBConnection)){
                     cmd.Parameters.AddWithValue("v", violation);
                     cmd.ExecuteNonQueryAsync().Wait();
                 }
@@ -158,7 +181,11 @@ namespace Stress_checker
         async Task StartMessage(long chat_id, int user_id){
             await botClient.SendTextMessageAsync(chat_id, $@"Це бот для перевірки наголосів. Для того, щоб це зробити, вам потрібно:
 1)  Зареєструватися за допомогою
-/register <код запрошення>
+{   "/register " +
+    (applicationData.admins.Contains((uint)user_id) ?
+    (applicationData.invite_code == null ? "<немає дійсного коду запрошення>" : applicationData.invite_code) 
+        : 
+    "<код запрошення>")}
 
     для перевірки, чи ви вже зереєстровані
 /is_registered
@@ -175,17 +202,23 @@ namespace Stress_checker
 3)  Якщо ви пам'ятаєте, як потрібно наголошувати слово:(Ще у розробці)
 /search слово
 
-4)  Для адміністрації
-/add_word <слово/слова через пропуск>
-
-5)  Довідка по використанню бота
+4)  Довідка по використанню бота
 /help
 { (applicationData.admins.Contains((uint)user_id) ? @"
+5)  Для адміністрації
+/add_word <слово/слова через пропуск>
+
+6) Створити код Запрошення
+/create_invite_code <довжина коду>
+
+7) Видалити код запрошення
+/delete_invite_code
+
 6)  Debug commands
 /my_id
 /update_data
 /is_admin" : "" ) }
-");
+", Telegram.Bot.Types.Enums.ParseMode.Default);
         }
         async Task<bool> in_proggress(int user_id){
             try{
@@ -214,6 +247,33 @@ namespace Stress_checker
                 return true;
             }
             return false;
+        }
+
+        bool createInviteCode(long user_id, int len = 24){
+            string newPass = "";
+            Random rand = new Random();
+
+            for(int i = 0; i < len; i++){
+                newPass += (char)rand.Next(65,126);
+            }
+
+            applicationData.invite_code = newPass;
+
+            botClient.SendTextMessageAsync(user_id, $"Новий код запрошення: `{newPass}`", Telegram.Bot.Types.Enums.ParseMode.Markdown).Wait();
+
+            appDataBackup();
+
+            return true;
+        }
+
+        bool removeInviteCode(long user_id){
+            applicationData.invite_code = null;
+
+            botClient.SendTextMessageAsync(user_id, "Код запрошення було успішно видалено").Wait();
+
+            appDataBackup();
+
+            return true;
         }
         Exception registerUser(int user_id, string key, bool inProggressError = false){
             if(inProggressError && (applicationData.invite_code == null || key != applicationData.invite_code)){
@@ -278,7 +338,7 @@ namespace Stress_checker
             return true;
         }
         async Task<int> wordsAmount(){
-            try{
+            // try{
             using(var comm = new NpgsqlCommand("select count(word) from words;", DBConnection))
             using(var reader = comm.ExecuteReader()){
                 while(reader.Read()){
@@ -286,10 +346,11 @@ namespace Stress_checker
                 }
                 await comm.DisposeAsync();
             }
-            }catch(System.InvalidOperationException){
-                await Task.Delay(2000);
-                return await wordsAmount();
-            }
+            // }catch(System.InvalidOperationException){
+            //     await Task.Delay(2000);
+            //     Console.WriteLine("'Error'");
+            //     return await wordsAmount();
+            // }
 
             return 0;
         }
@@ -310,6 +371,7 @@ namespace Stress_checker
                     }
                 }
             }
+            Console.WriteLine("Restored");
             return true;
         }
         async Task DeleteLastMessage(long user_id, long chat_id){
@@ -363,6 +425,8 @@ namespace Stress_checker
                     cmd.ExecuteNonQueryAsync().Wait();
                     await cmd.DisposeAsync();
                 }
+                if(DBConnection.State == System.Data.ConnectionState.Closed)
+                    DBConnection.Open();
                 await using (var cmd = new NpgsqlCommand($"SELECT id FROM words ORDER BY random() LIMIT {amount};", DBConnection))
                 await using (var reader = await cmd.ExecuteReaderAsync()){
                     while (await reader.ReadAsync()){
@@ -401,7 +465,7 @@ namespace Stress_checker
             await using (var reader = await cmd.ExecuteReaderAsync())
             while (await reader.ReadAsync()){
                 word.word = reader.GetFieldValue<string>(0);
-                word.definition = reader.GetFieldValue<string>(1);
+                word.definition = reader.GetFieldValue<string>(1) ?? string.Empty;
             }
 
             if(nextWord){

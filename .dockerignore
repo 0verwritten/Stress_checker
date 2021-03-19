@@ -1,0 +1,7 @@
+# .dockerignore
+
+Dockerfile
+[O|o]bj
+[d|D]atabase
+[B|b]in
+README.md
